@@ -1,0 +1,12 @@
+[network]
+controller1.nfvlab.telenor.no
+[computenfv]
+compute3.nfvlab.telenor.com NICVF1=enp0s3
+compute4.nfvlab.telenor.com NICVF1=enp0s3
+[compute]
+compute1.nfvlab.telenor.no
+compute2.nfvlab.telenor.no
+[controller]
+controller1.nfvlab.telenor.no
+[installer]
+localhost

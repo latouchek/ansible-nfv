@@ -1,0 +1,41 @@
+- name: Enable huge pages on compute nodes
+  hosts: computenfv
+  gather_facts: no
+  tasks:
+   - name: update kernel
+     command: /usr/sbin/grubby --update-kernel=ALL --args="hugepagesz=1G hugepages=1G intel_iommu=on"
+   - name: find out boot volume name and store it
+     shell: df -h | grep -w  "\/boot$"|cut -b 1-8
+     register: BOOTV
+   - name: print variable
+     debug: var=BOOTV
+#   - name: write conf to bootrecord
+#     command: /usr/sbin/grub2-install {{BOOTV.stdout}}
+   - name: update grub
+     command: grub2-mkconfig -o /boot/grub2/grub.cfg
+   - name: create mount point for hugetlbfs
+     mount: name=/mnt/huge  src=nodev fstype=hugetlbfs state=mounted opts="pagesize=1GB"
+   - name: copy hugetlb-gigantic-pages.service
+     copy: src=files/hugetlb-gigantic-pages.service dest=/usr/lib/systemd/system/hugetlb-gigantic-pages.service
+   - name: copy hugetlb-reserve-pages
+     copy: src=files/hugetlb-reserve-pages dest=/usr/lib/systemd/hugetlb-reserve-pages owner=root group=root mode=755
+   - name: enable hugetlb-gigantic-pages service
+     service: name=hugetlb-gigantic-pages enabled=yes #state=started
+   - name: disable ksmtuned and ksm
+     service: name={item} enabled=no state=stopped
+     with_items:
+     - ksmtuned
+     - ksm
+- name: Enable huge pages on controllers
+  hosts: controller
+  gather_facts: no
+  tasks:
+   - name: modify nova.conf
+     ini_file: dest=/etc/nova/nova.conf section={{ item.section }}  option={{ item.option }} value={{ item.value }} backup=yes
+     with_items:
+     - { section: 'DEFAULT', option: 'ram_allocation_ratio', value: '1.0'}
+     - { section: 'DEFAULT', option: 'scheduler_default_filters', value: 'RetryFilter,AvailabilityZoneFilter,RamFilter,ComputeFilter,ComputeCapabilitiesFilter,ImagePropertiesFilter,ServerGroupAntiAffinityFilter,ServerGroupAffinityFilter,PciPassthroughFilter,NUMATopologyFilter'}
+     register: novaconf
+   - name: restart nova
+     service: name=openstack-nova-compute state=restarted
+     when: novaconf.changed

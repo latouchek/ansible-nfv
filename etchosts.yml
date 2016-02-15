@@ -1,0 +1,19 @@
+- name: tasks to be performed on all hosts
+  hosts: [all]
+  tasks:
+   - name: Install packages for ubuntu
+     apt: name={{ item }} state=latest
+     with_items:
+      - bind9utils
+     when: ansible_distribution == 'Debian' or ansible_distribution == 'Ubuntu'
+   - name: Install packages for rhel
+     yum: name={{ item }}  state=latest
+     sudo: yes
+     with_items:
+      - bind-utils
+     when: ansible_distribution == 'CentOS' or ansible_distribution == 'Red Hat Enterprise Linux'
+###########################################create hosts file#############################################################
+   - name: "Build hosts file"
+     lineinfile: dest=/etc/hosts regexp='.*{{ item }}$' line="{{ hostvars[item].ansible_default_ipv4.address }} {{item}}" state=present
+     when: hostvars[item].ansible_default_ipv4.address is defined
+     with_items: groups['all']

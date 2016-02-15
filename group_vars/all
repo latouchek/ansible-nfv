@@ -1,0 +1,6 @@
+VFNIC2: ens787f1
+PFNIC1: ens787f1
+PFNIC2: ens787f1
+NRVF: 8
+phyeno3: "3011:3011"
+physnet_sriov: "3012:3043"

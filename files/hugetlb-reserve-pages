@@ -1,0 +1,19 @@
+#!/bin/bash
+
+nodes_path=/sys/devices/system/node/
+if [ ! -d \$nodes_path ]; then
+	echo "ERROR: $nodes_path does not exist"
+	exit 1
+fi
+
+reserve_pages()
+{
+	echo \$1 > \$nodes_path/\$2/hugepages/hugepages-1048576kB/nr_hugepages
+}
+
+# This example reserves 6 1G pages on node0 and 3 1G page on node2. You
+# can modify it to your needs or add more lines to reserve memory in
+# other nodes. Don't forget to uncomment the lines, otherwise then won't
+# be executed.
+reserve_pages $((hugepages/2)) node0
+reserve_pages $((hugepages/2)) node1

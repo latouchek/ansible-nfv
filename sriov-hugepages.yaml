@@ -1,0 +1,88 @@
+- name: enable vf on NICVF
+  hosts: computenfv
+  gather_facts: no
+  tasks:
+    - name: find out pci address
+      shell: ethtool -i {{NICVF1}}|grep bus-info:|awk '{print $2}' #ethtool -i {{$NICVF1}} | grep bus-info | cut -b 16-22
+      register: nicf1businfo
+    - name: print variable nicf1businfo
+      debug: var=nicf1businfo
+
+    - name: rewrite  nivf1businfo
+      shell: ethtool -i {{NICVF1}}|grep bus-info:|awk  '{print $2}'|sed 's/\:/\\\:/g'
+      register: tnicf1businfo
+    - name: print variable tnicf1businfo
+      debug: var=tnicf1businfo
+
+    - name: isolate usable part of pci address
+      shell: ethtool -i {{NICVF1}}|grep bus-info:|awk '{print $2}'|cut -b 6-12
+      register: pciuadd
+    - name: print variable pciuadd
+      debug: var=pciuadd
+
+    - name: store vendorid
+      shell: lspci -n |grep -w {{pciuadd.stdout}}|cut -c15-18
+      register: vendorid
+    - name: print variable vendorid
+      debug: var=vendorid
+
+    - name: store product id
+      shell: lspci -n | grep {{pciuadd.stdout}}|cut -c20-23
+      register: productid
+    - name: print variable productid
+      debug: var=productid
+
+    - name : create rules
+      template: src=templates/sriov.rules  dest=/etc/udev/rules.d/sriov.rules
+    - name: update kernel
+     command: /usr/sbin/grubby --update-kernel=ALL --args="hugepagesz=1G hugepages=1G intel_iommu=on"
+    - name: find out boot volume name and store it
+      shell: df -h | grep -w  "\/boot$"|cut -b 1-8
+      register: BOOTV
+    - name: print variable
+      debug: var=BOOTV
+#   - name: write conf to bootrecord
+#     command: /usr/sbin/grub2-install {{BOOTV.stdout}}
+    - name: update grub
+      command: grub2-mkconfig -o /boot/grub2/grub.cfg
+    - name: create mount point for hugetlbfs
+      mount: name=/mnt/huge  src=nodev fstype=hugetlbfs state=mounted opts="pagesize=1GB"
+    - name: copy hugetlb-gigantic-pages.service
+      copy: src=files/hugetlb-gigantic-pages.service dest=/usr/lib/systemd/system/hugetlb-gigantic-pages.service
+    - name: copy hugetlb-reserve-pages
+      copy: src=files/hugetlb-reserve-pages dest=/usr/lib/systemd/hugetlb-reserve-pages owner=root group=root mode=755
+    - name: enable hugetlb-gigantic-pages service
+      service: name=hugetlb-gigantic-pages enabled=yes #state=started
+    - name: disable ksmtuned and ksm
+      service: name={item} enabled=no state=stopped
+      with_items:
+      - ksmtuned
+      - ksm
+
+- name: Modify Neutron config on network nodes
+  hosts: network
+  gather_facts: no
+  tasks:
+    - name: modify ml2_conf.ini
+      ini_file: dest=/etc/neutron/plugins/ml2/ml2_conf.ini  section={{ item.section }}  option={{ item.option }} value={{ item.value }} backup=yes
+      with_items:
+       - { section: 'ml2', option: 'mechanism_drivers', value: 'openvswitch,sriovnicswitch'}
+       - { section: 'ml2_type_vlan', option: 'network_vlan_ranges', value: 'phyeno3:{{phyeno3}},physnet_sriov:{{physnet_sriov}}'}
+       - { section: 'ml2_sriov', option: 'supported_pci_vendor_devs', value: '{{vendorid.stdout}}:{{productid.stdout}}'}
+      register: m2ini
+    - name: restart neutron
+      service: name=openstack-neutron-server state=restarted
+      when: m2ini.changed
+- name: Enable huge pages on controllers
+  hosts: controller
+  gather_facts: no
+  tasks:
+    - name: modify nova.conf
+     ini_file: dest=/etc/nova/nova.conf section={{ item.section }}  option={{ item.option }} value={{ item.value }} backup=yes
+     with_items:
+     - { section: 'DEFAULT', option: 'ram_allocation_ratio', value: '1.0'}
+     - { section: 'DEFAULT', option: 'scheduler_default_filters', value: 'RetryFilter,AvailabilityZoneFilter,RamFilter,ComputeFilter,ComputeCapabilitiesFilter,ImagePropertiesFilter,ServerGroupAntiAffinityFilter,ServerGroupAffinityFilter,PciPassthroughFilter,NUMATopologyFilter'}
+     register: novaconf
+    - name: restart nova
+      service: name=openstack-nova-compute state=restarted
+      when: novaconf.changed

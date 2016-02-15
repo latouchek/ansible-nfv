@@ -1,0 +1,50 @@
+- name: enable vf on NICVF
+  hosts: computenfv
+  gather_facts: no
+  tasks:
+    - name: find out pci address
+      shell: ethtool -i {{NICVF1}}|grep bus-info:|awk '{print $2}' #ethtool -i {{$NICVF1}} | grep bus-info | cut -b 16-22
+      register: nicf1businfo
+    - name: print variable nicf1businfo
+      debug: var=nicf1businfo
+
+    - name: rewrite  nivf1businfo
+      shell: ethtool -i {{NICVF1}}|grep bus-info:|awk  '{print $2}'|sed 's/\:/\\\:/g'
+      register: tnicf1businfo
+    - name: print variable tnicf1businfo
+      debug: var=tnicf1businfo
+
+    - name: isolate usable part of pci address
+      shell: ethtool -i {{NICVF1}}|grep bus-info:|awk '{print $2}'|cut -b 6-12
+      register: pciuadd
+    - name: print variable pciuadd
+      debug: var=pciuadd
+
+    - name: store vendorid
+      shell: lspci -n |grep -w {{pciuadd.stdout}}|cut -c15-18
+      register: vendorid
+    - name: print variable vendorid
+      debug: var=vendorid
+
+    - name: store product id
+      shell: lspci -n | grep {{pciuadd.stdout}}|cut -c20-23
+      register: productid
+    - name: print variable productid
+      debug: var=productid
+
+    - name : create rules
+      template: src=templates/sriov.rules  dest=/etc/udev/rules.d/sriov.rules
+- name: Modify Neutron config on network nodes
+  hosts: network
+  gather_facts: no
+  tasks:
+    - name: modify ml2_conf.ini
+      ini_file: dest=/etc/neutron/plugins/ml2/ml2_conf.ini  section={{ item.section }}  option={{ item.option }} value={{ item.value }} backup=yes
+      with_items:
+       - { section: 'ml2', option: 'mechanism_drivers', value: 'openvswitch,sriovnicswitch'}
+       - { section: 'ml2_type_vlan', option: 'network_vlan_ranges', value: 'phyeno3:{{phyeno3}},physnet_sriov:{{physnet_sriov}}'}
+       - { section: 'ml2_sriov', option: 'supported_pci_vendor_devs', value: '{{vendorid.stdout}}:{{productid.stdout}}'}
+      register: m2ini
+    - name: restart neutron
+      service: name=openstack-neutron-server state=restarted
+      when: m2ini.changed
